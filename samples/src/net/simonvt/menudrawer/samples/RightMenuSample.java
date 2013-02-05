@@ -1,7 +1,7 @@
 package net.simonvt.menudrawer.samples;
 
-import net.simonvt.widget.MenuDrawer;
-import net.simonvt.widget.MenuDrawerManager;
+import net.simonvt.menudrawer.MenuDrawer;
+import net.simonvt.menudrawer.Position;
 
 import android.app.Activity;
 import android.os.Build;
@@ -10,8 +10,10 @@ import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.AbsListView;
 import android.widget.AdapterView;
 import android.widget.BaseAdapter;
+import android.widget.ListView;
 import android.widget.TextView;
 
 import java.util.ArrayList;
@@ -19,16 +21,15 @@ import java.util.List;
 
 public class RightMenuSample extends Activity {
 
-    private static final String STATE_MENUDRAWER = "net.simonvt.menudrawer.samples.RightMenuSample.menuDrawer";
     private static final String STATE_ACTIVE_POSITION = "net.simonvt.menudrawer.samples.RightMenuSample.activePosition";
     private static final String STATE_CONTENT_TEXT = "net.simonvt.menudrawer.samples.RightMenuSample.contentText";
 
     private static final int MENU_OVERFLOW = 1;
 
-    private MenuDrawerManager mMenuDrawer;
+    private MenuDrawer mMenuDrawer;
 
     private MenuAdapter mAdapter;
-    private MenuListView mList;
+    private ListView mList;
 
     private int mActivePosition = -1;
     private String mContentText;
@@ -43,7 +44,7 @@ public class RightMenuSample extends Activity {
             mContentText = inState.getString(STATE_CONTENT_TEXT);
         }
 
-        mMenuDrawer = new MenuDrawerManager(this, MenuDrawer.MENU_DRAG_CONTENT, MenuDrawer.MENU_POSITION_RIGHT);
+        mMenuDrawer = MenuDrawer.attach(this, MenuDrawer.MENU_DRAG_CONTENT, Position.RIGHT);
         mMenuDrawer.setContentView(R.layout.activity_rightmenu);
 
         List<Object> items = new ArrayList<Object>();
@@ -58,14 +59,18 @@ public class RightMenuSample extends Activity {
 
         // A custom ListView is needed so the drawer can be notified when it's scrolled. This is to update the position
         // of the arrow indicator.
-        mList = new MenuListView(this);
+        mList = new ListView(this);
         mAdapter = new MenuAdapter(items);
         mList.setAdapter(mAdapter);
         mList.setOnItemClickListener(mItemClickListener);
-        mList.setOnScrollChangedListener(new MenuListView.OnScrollChangedListener() {
+        mList.setOnScrollListener(new AbsListView.OnScrollListener() {
             @Override
-            public void onScrollChanged() {
-                mMenuDrawer.getMenuDrawer().invalidate();
+            public void onScrollStateChanged(AbsListView view, int scrollState) {
+            }
+
+            @Override
+            public void onScroll(AbsListView view, int firstVisibleItem, int visibleItemCount, int totalItemCount) {
+                mMenuDrawer.invalidate();
             }
         });
 
@@ -86,15 +91,8 @@ public class RightMenuSample extends Activity {
     };
 
     @Override
-    protected void onRestoreInstanceState(Bundle inState) {
-        super.onRestoreInstanceState(inState);
-        mMenuDrawer.onRestoreDrawerState(inState.getParcelable(STATE_MENUDRAWER));
-    }
-
-    @Override
     protected void onSaveInstanceState(Bundle outState) {
         super.onSaveInstanceState(outState);
-        outState.putParcelable(STATE_MENUDRAWER, mMenuDrawer.onSaveDrawerState());
         outState.putInt(STATE_ACTIVE_POSITION, mActivePosition);
         outState.putString(STATE_CONTENT_TEXT, mContentText);
     }

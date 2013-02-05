@@ -11,4 +11,13 @@
 
         <item name="menuDrawerStyle">@style/MenuDrawerStyle.Right</item>
     </style>
+
+    <style name="SampleTheme.TopDrawer" parent="SampleBase">
+        <item name="menuDrawerStyle">@style/MenuDrawerStyle.Top</item>
+    </style>
+
+    <style name="SampleTheme.BottomDrawer" parent="SampleBase">
+        <item name="menuDrawerStyle">@style/MenuDrawerStyle.Bottom</item>
+    </style>
+
 </resources>

@@ -2,7 +2,7 @@ package net.simonvt.menudrawer;
 
 import android.view.animation.Interpolator;
 
-class SmoothInterpolator implements Interpolator {
+public class SmoothInterpolator implements Interpolator {
 
     @Override
     public float getInterpolation(float t) {

@@ -23,7 +23,7 @@ Usage
 =====
 
 This library is very simple to use. It requires no extension of custom classes,
-it's simply added to an activity by calling one of the MenuDrawer#attach(...)
+it's simply added to an activity by calling one of the `MenuDrawer#attach(...)`
 methods.
 
 For more examples on how to use this library, check out the sample app.
@@ -41,7 +41,7 @@ public class SampleActivity extends Activity {
         super.onCreate(state);
         mDrawer = MenuDrawer.attach(this);
         mDrawer.setContentView(R.layout.activity_sample);
-        mDrawer.setMenu(R.layout.menu_sample);
+        mDrawer.setMenuView(R.layout.menu_sample);
     }
 }
 ```
@@ -59,7 +59,7 @@ public class SampleActivity extends Activity {
         super.onCreate(state);
         mDrawer = MenuDrawer.attach(this, Position.RIGHT);
         mDrawer.setContentView(R.layout.activity_sample);
-        mDrawer.setMenu(R.layout.menu_sample);
+        mDrawer.setMenuView(R.layout.menu_sample);
     }
 }
 ```

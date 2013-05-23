@@ -1,5 +1,7 @@
 package net.simonvt.menudrawer;
 
+import net.simonvt.menudrawer.compat.ActionBarHelper;
+
 import android.app.Activity;
 import android.content.Context;
 import android.content.res.TypedArray;
@@ -8,12 +10,17 @@ import android.graphics.BitmapFactory;
 import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
 import android.os.Build;
+import android.os.Bundle;
+import android.os.Parcel;
 import android.os.Parcelable;
 import android.util.AttributeSet;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewParent;
+import android.view.ViewTreeObserver;
+import android.view.animation.Interpolator;
 
 public abstract class MenuDrawer extends ViewGroup {
 
@@ -29,6 +36,33 @@ public abstract class MenuDrawer extends ViewGroup {
          * @param newState The new drawer state.
          */
         void onDrawerStateChange(int oldState, int newState);
+
+        /**
+         * Called when the drawer slides.
+         *
+         * @param openRatio    Ratio for how open the menu is.
+         * @param offsetPixels Current offset of the menu in pixels.
+         */
+        void onDrawerSlide(float openRatio, int offsetPixels);
+    }
+
+    /**
+     * Callback that is invoked when the drawer is in the process of deciding whether it should intercept the touch
+     * event. This lets the listener decide if the pointer is on a view that would disallow dragging of the drawer.
+     * This is only called when the touch mode is {@link #TOUCH_MODE_FULLSCREEN}.
+     */
+    public interface OnInterceptMoveEventListener {
+
+        /**
+         * Called for each child the pointer i on when the drawer is deciding whether to intercept the touch event.
+         *
+         * @param v  View to test for draggability
+         * @param dx Delta drag in pixels
+         * @param x  X coordinate of the active touch point
+         * @param y  Y coordinate of the active touch point
+         * @return true if view is draggable by delta dx.
+         */
+        boolean isViewDraggable(View v, int dx, int x, int y);
     }
 
     /**
@@ -40,6 +74,11 @@ public abstract class MenuDrawer extends ViewGroup {
      * Indicates whether debug code should be enabled.
      */
     private static final boolean DEBUG = false;
+
+    /**
+     * The time between each frame when animating the drawer.
+     */
+    protected static final int ANIMATION_DELAY = 1000 / 60;
 
     /**
      * The default touch bezel size of the drawer in dp.
@@ -107,6 +146,21 @@ public abstract class MenuDrawer extends ViewGroup {
     static final boolean USE_TRANSLATIONS = Build.VERSION.SDK_INT >= Build.VERSION_CODES.HONEYCOMB_MR1;
 
     /**
+     * Time to animate the indicator to the new active view.
+     */
+    static final int INDICATOR_ANIM_DURATION = 800;
+
+    /**
+     * The maximum animation duration.
+     */
+    private static final int DEFAULT_ANIMATION_DURATION = 600;
+
+    /**
+     * Interpolator used when animating the drawer open/closed.
+     */
+    protected static final Interpolator SMOOTH_INTERPOLATOR = new SmoothInterpolator();
+
+    /**
      * Drawable used as menu overlay.
      */
     protected Drawable mMenuOverlay;
@@ -143,9 +197,19 @@ public abstract class MenuDrawer extends ViewGroup {
     protected int mActivePosition;
 
     /**
+     * Whether the indicator should be animated between positions.
+     */
+    private boolean mAllowIndicatorAnimation;
+
+    /**
      * Used when reading the position of the active view.
      */
     protected final Rect mActiveRect = new Rect();
+
+    /**
+     * Temporary {@link Rect} used for deciding whether the view should be invalidated so the indicator can be redrawn.
+     */
+    private final Rect mTempRect = new Rect();
 
     /**
      * The custom menu view set by the user.
@@ -225,6 +289,65 @@ public abstract class MenuDrawer extends ViewGroup {
      * The Activity the drawer is attached to.
      */
     private Activity mActivity;
+
+    /**
+     * Scroller used when animating the indicator to a new position.
+     */
+    private FloatScroller mIndicatorScroller;
+
+    /**
+     * Runnable used when animating the indicator to a new position.
+     */
+    private Runnable mIndicatorRunnable = new Runnable() {
+        @Override
+        public void run() {
+            animateIndicatorInvalidate();
+        }
+    };
+
+    /**
+     * The start position of the indicator when animating it to a new position.
+     */
+    protected int mIndicatorStartPos;
+
+    /**
+     * [0..1] value indicating the current progress of the animation.
+     */
+    protected float mIndicatorOffset;
+
+    /**
+     * Whether the indicator is currently animating.
+     */
+    protected boolean mIndicatorAnimating;
+
+    /**
+     * Bundle used to hold the drawers state.
+     */
+    protected Bundle mState;
+
+    /**
+     * The maximum duration of open/close animations.
+     */
+    protected int mMaxAnimationDuration = DEFAULT_ANIMATION_DURATION;
+
+    /**
+     * Callback that lets the listener override intercepting of touch events.
+     */
+    protected OnInterceptMoveEventListener mOnInterceptMoveEventListener;
+
+    protected SlideDrawable mSlideDrawable;
+
+    protected Drawable mThemeUpIndicator;
+
+    protected boolean mDrawerIndicatorEnabled;
+
+    private ActionBarHelper mActionBarHelper;
+
+    private int mCurrentUpContentDesc;
+
+    private int mDrawerOpenContentDesc;
+
+    private int mDrawerClosedContentDesc;
 
     /**
      * Attaches the MenuDrawer to the Activity.
@@ -324,7 +447,9 @@ public abstract class MenuDrawer extends ViewGroup {
 
         switch (position) {
             case LEFT:
-                return new LeftDrawer(activity, dragMode);
+                MenuDrawer drawer = new LeftDrawer(activity, dragMode);
+                drawer.setupUpIndicator(activity);
+                return drawer;
             case RIGHT:
                 return new RightDrawer(activity, dragMode);
             case TOP:
@@ -416,39 +541,80 @@ public abstract class MenuDrawer extends ViewGroup {
         mTouchBezelSize = a.getDimensionPixelSize(R.styleable.MenuDrawer_mdTouchBezelSize,
                 dpToPx(DEFAULT_DRAG_BEZEL_DP));
 
+        mAllowIndicatorAnimation = a.getBoolean(R.styleable.MenuDrawer_mdAllowIndicatorAnimation, false);
+
+        mMaxAnimationDuration = a.getInt(R.styleable.MenuDrawer_mdMaxAnimationDuration, DEFAULT_ANIMATION_DURATION);
+
+        final int slideDrawableResId = a.getResourceId(R.styleable.MenuDrawer_mdSlideDrawable, -1);
+        if (slideDrawableResId != -1) {
+            setSlideDrawable(slideDrawableResId);
+        }
+
+        mDrawerOpenContentDesc = a.getResourceId(R.styleable.MenuDrawer_mdDrawerOpenUpContentDescription, 0);
+
+        mDrawerClosedContentDesc = a.getResourceId(R.styleable.MenuDrawer_mdDrawerClosedUpContentDescription, 0);
+
         a.recycle();
 
         mMenuContainer = new BuildLayerFrameLayout(context);
         mMenuContainer.setId(R.id.md__menu);
         mMenuContainer.setBackgroundDrawable(menuBackground);
-        addView(mMenuContainer);
+        super.addView(mMenuContainer, -1, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
 
         mContentContainer = new NoClickThroughFrameLayout(context);
         mContentContainer.setId(R.id.md__content);
         mContentContainer.setBackgroundDrawable(contentBackground);
-        addView(mContentContainer);
+        super.addView(mContentContainer, -1, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
 
         mMenuOverlay = new ColorDrawable(0xFF000000);
+
+        mIndicatorScroller = new FloatScroller(SMOOTH_INTERPOLATOR);
     }
 
     @Override
-    protected void onFinishInflate() {
-        super.onFinishInflate();
-        View mv = findViewById(R.id.mdMenu);
-        if (mv != null) {
-            removeView(mv);
-            mMenuContainer.addView(mv);
+    public void addView(View child, int index, LayoutParams params) {
+        int childCount = mMenuContainer.getChildCount();
+        if (childCount == 0) {
+            mMenuContainer.addView(child, index, params);
+            return;
         }
 
-        View cv = findViewById(R.id.mdContent);
-        if (cv != null) {
-            removeView(cv);
-            mContentContainer.addView(cv);
+        childCount = mContentContainer.getChildCount();
+        if (childCount == 0) {
+            mContentContainer.addView(child, index, params);
+            return;
         }
+
+        throw new IllegalStateException("MenuDrawer can only hold two child views");
     }
 
     protected int dpToPx(int dp) {
         return (int) (getResources().getDisplayMetrics().density * dp + 0.5f);
+    }
+
+    protected boolean isViewDescendant(View v) {
+        ViewParent parent = v.getParent();
+        while (parent != null) {
+            if (parent == this) {
+                return true;
+            }
+
+            parent = parent.getParent();
+        }
+
+        return false;
+    }
+
+    @Override
+    protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        getViewTreeObserver().addOnScrollChangedListener(mScrollListener);
+    }
+
+    @Override
+    protected void onDetachedFromWindow() {
+        getViewTreeObserver().removeOnScrollChangedListener(mScrollListener);
+        super.onDetachedFromWindow();
     }
 
     /**
@@ -503,9 +669,18 @@ public abstract class MenuDrawer extends ViewGroup {
     /**
      * Set the size of the menu drawer when open.
      *
-     * @param size
+     * @param size The size of the menu.
      */
     public abstract void setMenuSize(int size);
+
+    /**
+     * Returns the size of the menu.
+     *
+     * @return The size of the menu.
+     */
+    public int getMenuSize() {
+        return mMenuSize;
+    }
 
     /**
      * Set the active view.
@@ -526,8 +701,96 @@ public abstract class MenuDrawer extends ViewGroup {
      *                 must be called first.
      */
     public void setActiveView(View v, int position) {
+        final View oldView = mActiveView;
         mActiveView = v;
         mActivePosition = position;
+
+        if (mAllowIndicatorAnimation && oldView != null) {
+            startAnimatingIndicator();
+        }
+
+        invalidate();
+    }
+
+    /**
+     * Sets whether the indicator should be animated between active views.
+     *
+     * @param animate Whether the indicator should be animated between active views.
+     */
+    public void setAllowIndicatorAnimation(boolean animate) {
+        if (animate != mAllowIndicatorAnimation) {
+            mAllowIndicatorAnimation = animate;
+            completeAnimatingIndicator();
+        }
+    }
+
+    /**
+     * Indicates whether the indicator should be animated between active views.
+     *
+     * @return Whether the indicator should be animated between active views.
+     */
+    public boolean getAllowIndicatorAnimation() {
+        return mAllowIndicatorAnimation;
+    }
+
+    /**
+     * Scroll listener that checks whether the active view has moved before the drawer is invalidated.
+     */
+    private ViewTreeObserver.OnScrollChangedListener mScrollListener = new ViewTreeObserver.OnScrollChangedListener() {
+        @Override
+        public void onScrollChanged() {
+            if (mActiveView != null && isViewDescendant(mActiveView)) {
+                mActiveView.getDrawingRect(mTempRect);
+                offsetDescendantRectToMyCoords(mActiveView, mTempRect);
+                if (mTempRect.left != mActiveRect.left || mTempRect.top != mActiveRect.top
+                        || mTempRect.right != mActiveRect.right || mTempRect.bottom != mActiveRect.bottom) {
+                    invalidate();
+                }
+            }
+        }
+    };
+
+    /**
+     * Starts animating the indicator to a new position.
+     */
+    private void startAnimatingIndicator() {
+        mIndicatorStartPos = getIndicatorStartPos();
+        mIndicatorAnimating = true;
+        mIndicatorScroller.startScroll(0.0f, 1.0f, INDICATOR_ANIM_DURATION);
+
+        animateIndicatorInvalidate();
+    }
+
+    /**
+     * Returns the start position of the indicator.
+     *
+     * @return The start position of the indicator.
+     */
+    protected abstract int getIndicatorStartPos();
+
+    /**
+     * Callback when each frame in the indicator animation should be drawn.
+     */
+    private void animateIndicatorInvalidate() {
+        if (mIndicatorScroller.computeScrollOffset()) {
+            mIndicatorOffset = mIndicatorScroller.getCurr();
+            invalidate();
+
+            if (!mIndicatorScroller.isFinished()) {
+                postOnAnimation(mIndicatorRunnable);
+                return;
+            }
+        }
+
+        completeAnimatingIndicator();
+    }
+
+    /**
+     * Called when the indicator animation has completed.
+     */
+    private void completeAnimatingIndicator() {
+        mIndicatorOffset = 1.0f;
+        mIndicatorAnimating = false;
         invalidate();
     }
 
@@ -556,6 +819,15 @@ public abstract class MenuDrawer extends ViewGroup {
      */
     public void setOnDrawerStateChangeListener(OnDrawerStateChangeListener listener) {
         mOnDrawerStateChangeListener = listener;
+    }
+
+    /**
+     * Register a callback that will be invoked when the drawer is about to intercept touch events.
+     *
+     * @param listener The callback that will be invoked.
+     */
+    public void setOnInterceptMoveEventListener(OnInterceptMoveEventListener listener) {
+        mOnInterceptMoveEventListener = listener;
     }
 
     /**
@@ -639,6 +911,84 @@ public abstract class MenuDrawer extends ViewGroup {
      * @param enabled Whether hardware layers are enabled.
      */
     public abstract void setHardwareLayerEnabled(boolean enabled);
+
+    /**
+     * Sets the maximum duration of open/close animations.
+     *
+     * @param duration The maximum duration in milliseconds.
+     */
+    public void setMaxAnimationDuration(int duration) {
+        mMaxAnimationDuration = duration;
+    }
+
+    protected void updateUpContentDescription() {
+        final int upContentDesc = isMenuVisible() ? mDrawerOpenContentDesc : mDrawerClosedContentDesc;
+        if (mDrawerIndicatorEnabled && mActionBarHelper != null && upContentDesc != mCurrentUpContentDesc) {
+            mCurrentUpContentDesc = upContentDesc;
+            mActionBarHelper.setActionBarDescription(upContentDesc);
+        }
+    }
+
+    /**
+     * Sets the drawable used as the drawer indicator.
+     *
+     * @param drawable The drawable used as the drawer indicator.
+     */
+    public void setSlideDrawable(int drawableRes) {
+        setSlideDrawable(getResources().getDrawable(drawableRes));
+    }
+
+    /**
+     * Sets the drawable used as the drawer indicator.
+     *
+     * @param drawable The drawable used as the drawer indicator.
+     */
+    public void setSlideDrawable(Drawable drawable) {
+        mSlideDrawable = new SlideDrawable(drawable);
+
+        if (mActionBarHelper != null && mDrawerIndicatorEnabled) {
+            mActionBarHelper.setActionBarUpIndicator(mSlideDrawable,
+                    isMenuVisible() ? mDrawerOpenContentDesc : mDrawerClosedContentDesc);
+        }
+    }
+
+    /**
+     * Sets up the drawer indicator. It cna then be shown with {@link #setDrawerIndicatorEnabled(boolean)}.
+     *
+     * @param activity The activity the drawer is attached to.
+     */
+    public void setupUpIndicator(Activity activity) {
+        if (mActionBarHelper == null) {
+            mActionBarHelper = new ActionBarHelper(activity);
+            mThemeUpIndicator = mActionBarHelper.getThemeUpIndicator();
+            mActionBarHelper.setDisplayShowHomeAsUpEnabled(true);
+
+            if (mDrawerIndicatorEnabled) {
+                mActionBarHelper.setActionBarUpIndicator(mSlideDrawable,
+                        isMenuVisible() ? mDrawerOpenContentDesc : mDrawerClosedContentDesc);
+            }
+        }
+    }
+
+    /**
+     * Sets whether the drawer indicator should be enabled. {@link #setupUpIndicator(android.app.Activity)} must be
+     * called first.
+     *
+     * @param enabled Whether the drawer indicator should enabled.
+     */
+    public void setDrawerIndicatorEnabled(boolean enabled) {
+        if (mActionBarHelper == null) {
+            throw new IllegalStateException("setupUpIndicator(Activity) has not been called");
+        }
+
+        mDrawerIndicatorEnabled = enabled;
+        if (enabled) {
+            mActionBarHelper.setActionBarUpIndicator(mSlideDrawable,
+                    isMenuVisible() ? mDrawerOpenContentDesc : mDrawerClosedContentDesc);
+        } else {
+            mActionBarHelper.setActionBarUpIndicator(mThemeUpIndicator, 0);
+        }
+    }
 
     /**
      * Returns the ViewGroup used as a parent for the menu view.
@@ -811,6 +1161,15 @@ public abstract class MenuDrawer extends ViewGroup {
     public abstract int getTouchBezelSize();
 
     @Override
+    public void postOnAnimation(Runnable action) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN) {
+            super.postOnAnimation(action);
+        } else {
+            postDelayed(action, ANIMATION_DELAY);
+        }
+    }
+
+    @Override
     protected boolean fitSystemWindows(Rect insets) {
         if (mDragMode == MENU_DRAG_WINDOW) {
             mMenuContainer.setPadding(0, insets.top, 0, 0);
@@ -818,18 +1177,86 @@ public abstract class MenuDrawer extends ViewGroup {
         return super.fitSystemWindows(insets);
     }
 
+    protected void dispatchOnDrawerSlide(float openRatio, int offsetPixels) {
+        if (mOnDrawerStateChangeListener != null) {
+            mOnDrawerStateChangeListener.onDrawerSlide(openRatio, offsetPixels);
+        }
+    }
+
     /**
      * Saves the state of the drawer.
      *
      * @return Returns a Parcelable containing the drawer state.
      */
-    public abstract Parcelable saveState();
+    public final Parcelable saveState() {
+        if (mState == null) mState = new Bundle();
+        saveState(mState);
+        return mState;
+    }
+
+    void saveState(Bundle state) {
+        // State saving isn't required for subclasses.
+    }
 
     /**
      * Restores the state of the drawer.
      *
      * @param in A parcelable containing the drawer state.
      */
-    public abstract void restoreState(Parcelable in);
+    public void restoreState(Parcelable in) {
+        mState = (Bundle) in;
+    }
 
+    @Override
+    protected Parcelable onSaveInstanceState() {
+        Parcelable superState = super.onSaveInstanceState();
+        SavedState state = new SavedState(superState);
+
+        if (mState == null) mState = new Bundle();
+        saveState(mState);
+
+        state.mState = mState;
+        return state;
+    }
+
+    @Override
+    protected void onRestoreInstanceState(Parcelable state) {
+        SavedState savedState = (SavedState) state;
+        super.onRestoreInstanceState(savedState.getSuperState());
+
+        restoreState(savedState.mState);
+    }
+
+    static class SavedState extends BaseSavedState {
+
+        Bundle mState;
+
+        public SavedState(Parcelable superState) {
+            super(superState);
+        }
+
+        public SavedState(Parcel in) {
+            super(in);
+            mState = in.readBundle();
+        }
+
+        @Override
+        public void writeToParcel(Parcel dest, int flags) {
+            super.writeToParcel(dest, flags);
+            dest.writeBundle(mState);
+        }
+
+        @SuppressWarnings("UnusedDeclaration")
+        public static final Creator<SavedState> CREATOR = new Creator<SavedState>() {
+            @Override
+            public SavedState createFromParcel(Parcel in) {
+                return new SavedState(in);
+            }
+
+            @Override
+            public SavedState[] newArray(int size) {
+                return new SavedState[size];
+            }
+        };
+    }
 }

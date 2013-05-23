@@ -9,6 +9,8 @@ import android.view.MotionEvent;
 
 public class BottomDrawer extends VerticalDrawer {
 
+    private int mIndicatorLeft;
+
     BottomDrawer(Activity activity, int dragMode) {
         super(activity, dragMode);
     }
@@ -114,7 +116,7 @@ public class BottomDrawer extends VerticalDrawer {
 
     @Override
     protected void drawIndicator(Canvas canvas, int offsetPixels) {
-        if (mActiveView != null && mActiveView.getParent() != null) {
+        if (mActiveView != null && isViewDescendant(mActiveView)) {
             Integer position = (Integer) mActiveView.getTag(R.id.mdActiveViewPosition);
             final int pos = position == null ? 0 : position;
 
@@ -134,15 +136,28 @@ public class BottomDrawer extends VerticalDrawer {
 
                 final int indicatorBottom = height + offsetPixels + interpolatedHeight;
                 final int indicatorTop = indicatorBottom - indicatorHeight;
-                final int indicatorLeft = mActiveRect.left + ((mActiveRect.width() - indicatorWidth) / 2);
+                if (mIndicatorAnimating) {
+                    final int finalLeft = mActiveRect.left + ((mActiveRect.width() - indicatorWidth) / 2);
+                    final int startLeft = mIndicatorStartPos;
+                    final int diff = finalLeft - startLeft;
+                    final int startOffset = (int) (diff * mIndicatorOffset);
+                    mIndicatorLeft = startLeft + startOffset;
+                } else {
+                    mIndicatorLeft = mActiveRect.left + ((mActiveRect.width() - indicatorWidth) / 2);
+                }
 
                 canvas.save();
-                canvas.clipRect(indicatorLeft, height + offsetPixels, indicatorLeft + indicatorWidth,
+                canvas.clipRect(mIndicatorLeft, height + offsetPixels, mIndicatorLeft + indicatorWidth,
                         indicatorBottom);
-                canvas.drawBitmap(mActiveIndicator, indicatorLeft, indicatorTop, null);
+                canvas.drawBitmap(mActiveIndicator, mIndicatorLeft, indicatorTop, null);
                 canvas.restore();
             }
         }
+    }
+
+    @Override
+    protected int getIndicatorStartPos() {
+        return mIndicatorLeft;
     }
 
     @Override
@@ -195,16 +210,16 @@ public class BottomDrawer extends VerticalDrawer {
     @Override
     protected void onUpEvent(MotionEvent ev) {
         final int offsetPixels = (int) mOffsetPixels;
+        final int pointerIndex = ev.findPointerIndex(mActivePointerId);
 
         if (mIsDragging) {
             mVelocityTracker.computeCurrentVelocity(1000, mMaxVelocity);
-            final int initialVelocity = (int) mVelocityTracker.getXVelocity();
-            mLastMotionY = ev.getY();
-            animateOffsetTo(mVelocityTracker.getYVelocity() < 0 ? -mMenuSize : 0, initialVelocity,
-                    true);
+            final int initialVelocity = (int) mVelocityTracker.getYVelocity(mActivePointerId);
+            mLastMotionY = ev.getY(pointerIndex);
+            animateOffsetTo(initialVelocity < 0 ? -mMenuSize : 0, initialVelocity, true);
 
             // Close the menu when content is clicked while the menu is visible.
-        } else if (mMenuVisible && ev.getY() < getHeight() + offsetPixels) {
+        } else if (mMenuVisible && ev.getY(pointerIndex) < getHeight() + offsetPixels) {
             closeMenu();
         }
     }

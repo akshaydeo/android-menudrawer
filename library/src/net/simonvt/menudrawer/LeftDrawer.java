@@ -9,6 +9,8 @@ import android.view.MotionEvent;
 
 public class LeftDrawer extends HorizontalDrawer {
 
+    private int mIndicatorTop;
+
     LeftDrawer(Activity activity, int dragMode) {
         super(activity, dragMode);
     }
@@ -108,7 +110,7 @@ public class LeftDrawer extends HorizontalDrawer {
 
     @Override
     protected void drawIndicator(Canvas canvas, int offsetPixels) {
-        if (mActiveView != null && mActiveView.getParent() != null) {
+        if (mActiveView != null && isViewDescendant(mActiveView)) {
             Integer position = (Integer) mActiveView.getTag(R.id.mdActiveViewPosition);
             final int pos = position == null ? 0 : position;
 
@@ -121,16 +123,30 @@ public class LeftDrawer extends HorizontalDrawer {
                 final float interpolatedRatio = 1.f - INDICATOR_INTERPOLATOR.getInterpolation((1.f - openRatio));
                 final int interpolatedWidth = (int) (mActiveIndicator.getWidth() * interpolatedRatio);
 
-                final int top = mActiveRect.top + ((mActiveRect.height() - mActiveIndicator.getHeight()) / 2);
+                if (mIndicatorAnimating) {
+                    final int indicatorFinalTop = mActiveRect.top + ((mActiveRect.height()
+                            - mActiveIndicator.getHeight()) / 2);
+                    final int indicatorStartTop = mIndicatorStartPos;
+                    final int diff = indicatorFinalTop - indicatorStartTop;
+                    final int startOffset = (int) (diff * mIndicatorOffset);
+                    mIndicatorTop = indicatorStartTop + startOffset;
+                } else {
+                    mIndicatorTop = mActiveRect.top + ((mActiveRect.height() - mActiveIndicator.getHeight()) / 2);
+                }
                 final int right = offsetPixels;
                 final int left = right - interpolatedWidth;
 
                 canvas.save();
                 canvas.clipRect(left, 0, right, getHeight());
-                canvas.drawBitmap(mActiveIndicator, left, top, null);
+                canvas.drawBitmap(mActiveIndicator, left, mIndicatorTop, null);
                 canvas.restore();
             }
         }
+    }
+
+    @Override
+    protected int getIndicatorStartPos() {
+        return mIndicatorTop;
     }
 
     @Override
@@ -181,15 +197,16 @@ public class LeftDrawer extends HorizontalDrawer {
     @Override
     protected void onUpEvent(MotionEvent ev) {
         final int offsetPixels = (int) mOffsetPixels;
+        final int pointerIndex = ev.findPointerIndex(mActivePointerId);
 
         if (mIsDragging) {
             mVelocityTracker.computeCurrentVelocity(1000, mMaxVelocity);
-            final int initialVelocity = (int) mVelocityTracker.getXVelocity();
-            mLastMotionX = ev.getX();
-            animateOffsetTo(mVelocityTracker.getXVelocity() > 0 ? mMenuSize : 0, initialVelocity, true);
+            final int initialVelocity = (int) mVelocityTracker.getXVelocity(mActivePointerId);
+            mLastMotionX = ev.getX(pointerIndex);
+            animateOffsetTo(initialVelocity > 0 ? mMenuSize : 0, initialVelocity, true);
 
             // Close the menu when content is clicked while the menu is visible.
-        } else if (mMenuVisible && ev.getX() > offsetPixels) {
+        } else if (mMenuVisible && ev.getX(pointerIndex) > offsetPixels) {
             closeMenu();
         }
     }

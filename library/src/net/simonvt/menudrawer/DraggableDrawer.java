@@ -5,13 +5,13 @@ import android.content.Context;
 import android.graphics.Canvas;
 import android.os.Build;
 import android.os.Bundle;
-import android.os.Parcel;
 import android.os.Parcelable;
 import android.util.AttributeSet;
 import android.view.MotionEvent;
 import android.view.VelocityTracker;
 import android.view.View;
 import android.view.ViewConfiguration;
+import android.view.ViewGroup;
 import android.view.animation.AccelerateInterpolator;
 import android.view.animation.Interpolator;
 
@@ -31,16 +31,6 @@ public abstract class DraggableDrawer extends MenuDrawer {
      * Interpolator used for peeking at the drawer.
      */
     private static final Interpolator PEEK_INTERPOLATOR = new PeekInterpolator();
-
-    /**
-     * Interpolator used when animating the drawer open/closed.
-     */
-    private static final Interpolator SMOOTH_INTERPOLATOR = new SmoothInterpolator();
-
-    /**
-     * The time between each frame when animating the drawer.
-     */
-    protected static final int ANIMATION_DELAY = 1000 / 60;
 
     /**
      * The maximum alpha of the dark menu overlay used for dimming the menu.
@@ -63,14 +53,11 @@ public abstract class DraggableDrawer extends MenuDrawer {
     protected static final int PEEK_DURATION = 5000;
 
     /**
-     * The maximum animation duration.
-     */
-    private static final int DURATION_MAX = 600;
-
-    /**
      * Distance in dp from closed position from where the drawer is considered closed with regards to touch events.
      */
     private static final int CLOSE_ENOUGH = 3;
+
+    protected static final int INVALID_POINTER = -1;
 
     /**
      * Slop before starting a drag.
@@ -106,6 +93,11 @@ public abstract class DraggableDrawer extends MenuDrawer {
      * Indicates whether the drawer is currently being dragged.
      */
     protected boolean mIsDragging;
+
+    /**
+     * The current pointer id.
+     */
+    protected int mActivePointerId = INVALID_POINTER;
 
     /**
      * The initial X position of a drag.
@@ -196,7 +188,7 @@ public abstract class DraggableDrawer extends MenuDrawer {
         mTouchSlop = configuration.getScaledTouchSlop();
         mMaxVelocity = configuration.getScaledMaximumFlingVelocity();
 
-        mScroller = new Scroller(context, DraggableDrawer.SMOOTH_INTERPOLATOR);
+        mScroller = new Scroller(context, MenuDrawer.SMOOTH_INTERPOLATOR);
         mPeekScroller = new Scroller(context, DraggableDrawer.PEEK_INTERPOLATOR);
 
         mCloseEnough = dpToPx(DraggableDrawer.CLOSE_ENOUGH);
@@ -304,9 +296,19 @@ public abstract class DraggableDrawer extends MenuDrawer {
 
         mOffsetPixels = offsetPixels;
 
+        if (mSlideDrawable != null) {
+            final float offset = Math.abs(mOffsetPixels) / mMenuSize;
+            mSlideDrawable.setOffset(offset);
+            updateUpContentDescription();
+        }
+
         if (newOffset != oldOffset) {
             onOffsetPixelsChanged(newOffset);
             mMenuVisible = newOffset != 0;
+
+            // Notify any attached listeners of the current open ratio
+            final float openRatio = ((float) Math.abs(newOffset)) / mMenuSize;
+            dispatchOnDrawerSlide(openRatio, newOffset);
         }
     }
 
@@ -356,7 +358,7 @@ public abstract class DraggableDrawer extends MenuDrawer {
     /**
      * Called when a drag has been ended.
      */
-    private void endDrag() {
+    protected void endDrag() {
         mIsDragging = false;
 
         if (mVelocityTracker != null) {
@@ -414,7 +416,7 @@ public abstract class DraggableDrawer extends MenuDrawer {
             duration = (int) (600.f * Math.abs((float) dx / mMenuSize));
         }
 
-        duration = Math.min(duration, DURATION_MAX);
+        duration = Math.min(duration, mMaxAnimationDuration);
 
         if (dx > 0) {
             setDrawerState(STATE_OPENING);
@@ -507,15 +509,6 @@ public abstract class DraggableDrawer extends MenuDrawer {
         stopLayerTranslation();
     }
 
-    @Override
-    public void postOnAnimation(Runnable action) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN) {
-            super.postOnAnimation(action);
-        } else {
-            postDelayed(action, ANIMATION_DELAY);
-        }
-    }
-
     protected boolean isCloseEnough() {
         return Math.abs(mOffsetPixels) <= mCloseEnough;
     }
@@ -535,6 +528,90 @@ public abstract class DraggableDrawer extends MenuDrawer {
      * @return True if dragging the content should be allowed, false otherwise.
      */
     protected abstract boolean onDownAllowDrag(MotionEvent ev);
+
+    /**
+     * Tests scrollability within child views of v given a delta of dx.
+     *
+     * @param v      View to test for horizontal scrollability
+     * @param checkV Whether the view should be checked for draggability
+     * @param dx     Delta scrolled in pixels
+     * @param x      X coordinate of the active touch point
+     * @param y      Y coordinate of the active touch point
+     * @return true if child views of v can be scrolled by delta of dx.
+     */
+    protected boolean canChildScrollHorizontally(View v, boolean checkV, int dx, int x, int y) {
+        if (v instanceof ViewGroup) {
+            final ViewGroup group = (ViewGroup) v;
+
+            final int count = group.getChildCount();
+            // Count backwards - let topmost views consume scroll distance first.
+            for (int i = count - 1; i >= 0; i--) {
+                final View child = group.getChildAt(i);
+
+                final int childLeft = child.getLeft() + supportGetTranslationX(child);
+                final int childRight = child.getRight() + supportGetTranslationX(child);
+                final int childTop = child.getTop() + supportGetTranslationY(child);
+                final int childBottom = child.getBottom() + supportGetTranslationY(child);
+
+                if (x >= childLeft && x < childRight && y >= childTop && y < childBottom
+                        && canChildScrollHorizontally(child, true, dx, x - childLeft, y - childTop)) {
+                    return true;
+                }
+            }
+        }
+
+        return checkV && mOnInterceptMoveEventListener.isViewDraggable(v, dx, x, y);
+    }
+
+    /**
+     * Tests scrollability within child views of v given a delta of dx.
+     *
+     * @param v      View to test for horizontal scrollability
+     * @param checkV Whether the view should be checked for draggability
+     * @param dx     Delta scrolled in pixels
+     * @param x      X coordinate of the active touch point
+     * @param y      Y coordinate of the active touch point
+     * @return true if child views of v can be scrolled by delta of dx.
+     */
+    protected boolean canChildScrollVertically(View v, boolean checkV, int dx, int x, int y) {
+        if (v instanceof ViewGroup) {
+            final ViewGroup group = (ViewGroup) v;
+
+            final int count = group.getChildCount();
+            // Count backwards - let topmost views consume scroll distance first.
+            for (int i = count - 1; i >= 0; i--) {
+                final View child = group.getChildAt(i);
+
+                final int childLeft = child.getLeft() + supportGetTranslationX(child);
+                final int childRight = child.getRight() + supportGetTranslationX(child);
+                final int childTop = child.getTop() + supportGetTranslationY(child);
+                final int childBottom = child.getBottom() + supportGetTranslationY(child);
+
+                if (x >= childLeft && x < childRight && y >= childTop && y < childBottom
+                        && canChildScrollVertically(child, true, dx, x - childLeft, y - childTop)) {
+                    return true;
+                }
+            }
+        }
+
+        return checkV && mOnInterceptMoveEventListener.isViewDraggable(v, dx, x, y);
+    }
+
+    private int supportGetTranslationY(View v) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.HONEYCOMB) {
+            return (int) v.getTranslationY();
+        }
+
+        return 0;
+    }
+
+    private int supportGetTranslationX(View v) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.HONEYCOMB) {
+            return (int) v.getTranslationX();
+        }
+
+        return 0;
+    }
 
     /**
      * Returns true if dragging the content should be allowed.
@@ -593,69 +670,20 @@ public abstract class DraggableDrawer extends MenuDrawer {
      */
     protected abstract void drawIndicator(Canvas canvas, int offsetPixels);
 
-    public Parcelable saveState() {
-        Bundle state = new Bundle();
+    void saveState(Bundle state) {
         final boolean menuVisible = mDrawerState == STATE_OPEN || mDrawerState == STATE_OPENING;
         state.putBoolean(STATE_MENU_VISIBLE, menuVisible);
-        return state;
     }
 
     public void restoreState(Parcelable in) {
+        super.restoreState(in);
         Bundle state = (Bundle) in;
         final boolean menuOpen = state.getBoolean(STATE_MENU_VISIBLE);
-        setOffsetPixels(menuOpen ? mMenuSize : 0);
+        if (menuOpen) {
+            openMenu(false);
+        } else {
+            setOffsetPixels(0);
+        }
         mDrawerState = menuOpen ? STATE_OPEN : STATE_CLOSED;
-    }
-
-    @Override
-    protected Parcelable onSaveInstanceState() {
-        Parcelable superState = super.onSaveInstanceState();
-
-        SavedState state = new SavedState(superState);
-        state.mMenuVisible = mDrawerState == STATE_OPEN || mDrawerState == STATE_OPENING;
-
-        return state;
-    }
-
-    @Override
-    protected void onRestoreInstanceState(Parcelable state) {
-        SavedState savedState = (SavedState) state;
-        super.onRestoreInstanceState(savedState.getSuperState());
-
-        setOffsetPixels(savedState.mMenuVisible ? mMenuSize : 0);
-        mDrawerState = savedState.mMenuVisible ? STATE_OPEN : STATE_CLOSED;
-    }
-
-    static class SavedState extends BaseSavedState {
-
-        boolean mMenuVisible;
-
-        public SavedState(Parcelable superState) {
-            super(superState);
-        }
-
-        public SavedState(Parcel in) {
-            super(in);
-            mMenuVisible = in.readInt() == 1;
-        }
-
-        @Override
-        public void writeToParcel(Parcel dest, int flags) {
-            super.writeToParcel(dest, flags);
-            dest.writeInt(mMenuVisible ? 1 : 0);
-        }
-
-        @SuppressWarnings("UnusedDeclaration")
-        public static final Creator<SavedState> CREATOR = new Creator<SavedState>() {
-            @Override
-            public SavedState createFromParcel(Parcel in) {
-                return new SavedState(in);
-            }
-
-            @Override
-            public SavedState[] newArray(int size) {
-                return new SavedState[size];
-            }
-        };
     }
 }

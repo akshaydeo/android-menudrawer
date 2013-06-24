@@ -9,10 +9,10 @@
         <version>7</version>
     </parent>
 
-    <groupId>net.simonvt</groupId>
-    <artifactId>android-menudrawer-parent</artifactId>
+    <groupId>net.simonvt.menudrawer</groupId>
+    <artifactId>menudrawer-parent</artifactId>
     <packaging>pom</packaging>
-    <version>2.0.4-SNAPSHOT</version>
+    <version>3.0.3-SNAPSHOT</version>
 
     <name>Android MenuDrawer (Parent)</name>
     <description>A menu drawer implementation which allows dragging of both the content, and the entire window.</description>
@@ -28,8 +28,21 @@
         <url>http://github.com/SimonVT/android-menudrawer/</url>
         <connection>scm:git:git://github.com/SimonVT/android-menudrawer.git</connection>
         <developerConnection>scm:git:git@github.com:SimonVT/android-menudrawer.git</developerConnection>
-      <tag>HEAD</tag>
-  </scm>
+        <tag>HEAD</tag>
+    </scm>
+
+    <developers>
+        <developer>
+            <name>Simon Vig Therkildsen</name>
+            <email>simonvt@gmail.com</email>
+            <id>simonvt</id>
+            <url>http://simonvt.net</url>
+            <timezone>1</timezone>
+            <roles>
+                <role>developer</role>
+            </roles>
+        </developer>
+    </developers>
 
     <licenses>
         <license>

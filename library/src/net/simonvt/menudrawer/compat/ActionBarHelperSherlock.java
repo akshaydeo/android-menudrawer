@@ -22,15 +22,16 @@ final class ActionBarHelperSherlock {
         final SetIndicatorInfo sii = (SetIndicatorInfo) info;
         if (sii.mUpIndicatorView != null) {
             sii.mUpIndicatorView.setImageDrawable(drawable);
-            Drawable d = sii.mUpIndicatorView.getDrawable();
-            sii.mUpIndicatorView.setContentDescription(activity.getString(contentDescRes));
+            final String contentDescription = contentDescRes == 0 ? null : activity.getString(contentDescRes);
+            sii.mUpIndicatorView.setContentDescription(contentDescription);
         }
     }
 
     public static void setActionBarDescription(Object info, Activity activity, int contentDescRes) {
         final SetIndicatorInfo sii = (SetIndicatorInfo) info;
         if (sii.mUpIndicatorView != null) {
-            sii.mUpIndicatorView.setContentDescription(activity.getString(contentDescRes));
+            final String contentDescription = contentDescRes == 0 ? null : activity.getString(contentDescRes);
+            sii.mUpIndicatorView.setContentDescription(contentDescription);
         }
     }
 
@@ -71,7 +72,6 @@ final class ActionBarHelperSherlock {
                 ViewGroup parent = (ViewGroup) v.getParent();
                 final int upId = activity.getResources().getIdentifier("abs__up", "id", appPackage);
                 mUpIndicatorView = (ImageView) parent.findViewById(upId);
-                Log.d(TAG, "Id: " + upId);
 
                 Class sherlockActivity = activity.getClass();
                 Method getActionBar = sherlockActivity.getMethod("getSupportActionBar");

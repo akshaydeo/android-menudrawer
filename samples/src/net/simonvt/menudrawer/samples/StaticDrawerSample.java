@@ -15,8 +15,9 @@ import java.util.List;
 
 public class StaticDrawerSample extends Activity implements MenuAdapter.MenuListener {
 
-    private static final String STATE_ACTIVE_POSITION = "net.simonvt.menudrawer.samples.ContentSample.activePosition";
-    private static final String STATE_CONTENT_TEXT = "net.simonvt.menudrawer.samples.ContentSample.contentText";
+    private static final String STATE_ACTIVE_POSITION =
+            "net.simonvt.menudrawer.samples.LeftDrawerSample.activePosition";
+    private static final String STATE_CONTENT_TEXT = "net.simonvt.menudrawer.samples.LeftDrawerSample.contentText";
 
     private MenuDrawer mMenuDrawer;
 
@@ -36,8 +37,9 @@ public class StaticDrawerSample extends Activity implements MenuAdapter.MenuList
             mContentText = inState.getString(STATE_CONTENT_TEXT);
         }
 
-        mMenuDrawer = MenuDrawer.attach(this, MenuDrawer.MENU_DRAG_CONTENT, Position.LEFT, true);
+        mMenuDrawer = MenuDrawer.attach(this, MenuDrawer.Type.STATIC, Position.LEFT, MenuDrawer.MENU_DRAG_CONTENT);
         mMenuDrawer.setContentView(R.layout.activity_contentsample);
+        mMenuDrawer.setAllowIndicatorAnimation(true);
 
         List<Object> items = new ArrayList<Object>();
         items.add(new Item("Item 1", R.drawable.ic_action_refresh_dark));
